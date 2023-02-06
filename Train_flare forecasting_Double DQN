@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-seeds = [1234]
+seeds = [1234, 890, 123, 10, 4321, 62, 6301, 8, 888, 456]
 ################
 for seed in seeds:
 
