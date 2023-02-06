@@ -1,0 +1,78 @@
+import sys, os
+# os.environ['KMP_DUPLICATE_LIB_OK']='True'
+from tqdm import trange
+import torch
+import numpy as np
+import random
+import glob
+import pandas as pd
+from tqdm import tqdm, trange
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+from pipeline import Magnetograms
+from Models import DenseNet
+
+if __name__ =='__main__':
+
+    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu:0')
+    batch_size = 100
+
+    seed = 123
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.enabled = False
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
+    data_root = 'C:\\Users\\YKW\\PycharmProjects\\SUNPY\\generated\\Data_bySolarCycle'
+
+    # work_folders = ['DDQN_2ep_rest_rewardfunctions']
+    work_folders = ['Uncertainity_DDQN_ep1_others']
+
+    for folder in tqdm(work_folders):
+        Model_names = os.listdir(f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{folder}')
+        # Model_names = ['DenseNet_202112221352', 'DenseNet_202112221406']
+
+        for Model_name in tqdm(Model_names):
+
+            # model_paths = glob.glob(f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{Model_name}\\*\\*.h5')
+            model_paths = glob.glob(f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{folder}\\{Model_name}\\*\\*.h5')
+            # model_paths = glob.glob(f'C:\\Users\\YKW\\PycharmProjects\\FlareOccurrencePrediction\\Models\\RL_comparison\\Models_bySolarCycle\\{Model_name}\\*\\*.h5')
+
+            for model_path in tqdm(model_paths):
+
+                test = Magnetograms(mod='Test', root=data_root)
+
+                test_dataloader = DataLoader(test, batch_size=batch_size, shuffle=False, num_workers=0)
+
+                model = []
+                model = DenseNet(layers_num=5, growth_rate=13, drop_rate=0.5).to(device=DEVICE)
+
+                # # print(sum(p.numel() for p in model.parameters()))
+
+                dir, model_name = os.path.split(model_path)
+                model_state = torch.load(model_path, map_location=DEVICE)
+                model.load_state_dict(model_state)
+                model.eval()
+
+                date_pack, label_pack, flare_score_pack, Nonflare_score_pack = [], [], [], []
+                with torch.no_grad():
+                    for test_data, label, path in test_dataloader:
+                        test_data, label = test_data.to(device=DEVICE, dtype=torch.float32), label.to(device=DEVICE, dtype=torch.long)
+
+                        result = model(test_data)
+                        result = F.softmax(result, dim=1)
+
+                        date = [os.path.basename(i)[:8] for i in path]
+                        date_pack = date_pack + date
+                        label_pack = label_pack + list(label.cpu().numpy())
+                        Nonflare_score_pack = Nonflare_score_pack + list(result.detach().cpu().numpy()[:, 0])
+                        flare_score_pack = flare_score_pack + list(result.detach().cpu().numpy()[:, 1])
+
+                result_board = pd.DataFrame({'date': date_pack, 'label': label_pack, 'Non_flare': Nonflare_score_pack, 'flare': flare_score_pack})
+                result_board.to_csv(f'{dir}\\{model_name[:-3]}_TestResult.csv', index=False)
+
+    #############################################################
