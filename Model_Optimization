@@ -1,24 +1,21 @@
+###########################
+Run "Model_result_tocsv.py" first.
+This code optimize prediction thresholds of the results of models and compute skill scores for the optimized prediction threshold.
+###########################
+
 import os, sys
 import glob
 import numpy as np
 import pandas as pd
 from tqdm import tqdm, trange
 
-"""
-Run "Model_result_tocsv.py" first.
-This code optimize prediction thresholds of the results of models and compute skill scores for the optimized prediction threshold.
-"""
 
 criteria = np.arange(99) * 0.01 + 0.01
-
-# Model_names = ['DenseNet_202111241215', 'DenseNet_202111241718', 'DenseNet_202111251212', 'DenseNet_202111252107', 'DenseNet_202111261117', 'DenseNet_202111270919',
-#                    'DenseNet_202111270921', 'DenseNet_202111280907', 'DenseNet_202111280909']
 
 work_folders = ['Uncertainity_DDQN_ep1_others']
 
 for folder in tqdm(work_folders):
     Model_names = os.listdir(f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{folder}')
-    # Model_names = ['DenseNet_202112221352', 'DenseNet_202112221406']
 
     for Model_name in tqdm(Model_names):
 
@@ -26,9 +23,7 @@ for folder in tqdm(work_folders):
         best_record = None
         best_ACC, best_TSS, best_HSS_1, best_HSS_2, best_CSI, best_F1, best_GS, best_WACC, best_ApSS, best_record = \
             None, None, None, None, None, None, None, None, None, None
-        # result_paths = glob.glob(f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{Model_name}\\*\\*.csv')
         result_paths = glob.glob(f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{folder}\\{Model_name}\\*\\*.csv')
-        # result_paths = glob.glob(f'C:\\Users\\YKW\\PycharmProjects\\FlareOccurrencePrediction\\Models\\RL_comparison\\Models_bySolarCycle\\{Model_name}\\*\\*.csv')
 
         record = []
         for result_path in tqdm(result_paths):
