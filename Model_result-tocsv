@@ -1,5 +1,5 @@
 ###########################
-Export model's result to csv format for "Optimization.py".
+Save model's result to csv format for "Optimization.py".
 ###########################
 import sys, os
 # os.environ['KMP_DUPLICATE_LIB_OK']='True'
