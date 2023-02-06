@@ -1,0 +1,306 @@
+import math
+import random
+import os, sys
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+import gc
+import datetime
+import time
+from collections import namedtuple
+from tqdm import tqdm, trange
+from pipeline import Magnetograms
+from Models import DenseNet
+from torch.utils.data import DataLoader
+from Utils import save_model
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+seed = 1234
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+torch.backends.cudnn.enabled = False
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+
+is_ipython = 'inline' in matplotlib.get_backend()
+plt.ioff()
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+class ReplayMemory(object):
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+def select_action(state, learn_frames, policy='Policy'):
+    sample = random.random()
+    eps_threshold = np.clip(EPS_START - (EPS_START - EPS_END) * (learn_frames / EPS_DECAY), 0.1, 1)
+    if policy == 'Target':
+        eps_threshold = TARGET_EPS
+    if sample > eps_threshold:
+        with torch.no_grad():
+            policy_net.eval()
+            # t.max(1) will return largest column value of each row.
+            # second column on max result is index of where max element was
+            # found, so we pick action with the larger expected reward.
+            return policy_net(state.to(device=DEVICE)).max(1)[1]
+    else:
+        return torch.tensor([random.randrange(n_actions) for i in range(state.shape[0])], device=DEVICE, dtype=torch.long)
+
+def plot_scores():
+    plt.ioff()
+    plt.figure(2)
+    plt.clf()
+    scores_t = torch.tensor(epoch_scores, dtype=torch.float)
+    plt.title('Training & Test')
+    plt.xlabel('Episode')
+    plt.ylabel('Score')
+    plt.plot(scores_t.numpy())
+    # Take 100 episode averages and plot them too
+    average_term = 10
+    if len(scores_t) >= average_term:
+        means = scores_t.unfold(0, average_term, 1).mean(1).view(-1)
+        means = torch.cat((torch.zeros(average_term - 1), means))
+        plt.plot(means.numpy())
+
+    if len(test_scores) > 0:
+        plt.plot(test_ep, test_scores, 'r*')
+
+    # plt.pause(0.001)  # pause a bit so that plots are updated
+    # if is_ipython:
+    #     display.clear_output(wait=True)
+    #     display.display(plt.gcf())
+
+def skill_eval(cont_table:list):
+    ########## Observation #
+    ##########  N  ||  P  ##
+    # Fo | N |  TN ||  FN ||
+    # re |||||==============
+    # ca | P |  FP ||  TP ||
+    # st |||||==============
+
+    TP, FP, FN, TN = cont_table[1][1], cont_table[1][0], cont_table[0][1], cont_table[0][0]
+    eval_table = {}
+
+    eval_table['Cont'] = f'TP: {TP}, FP: {FP}, FN: {FN}, TN: {TN}'
+    eval_table['ACC'] = (TP + TN) / (TP + FP + FN + TN)
+    eval_table['TSS'] = TP / (TP + FN) - FP / (FP + TN)
+    eval_table['HSS_1'] = (TP - FP) / (TP + FN)
+    eval_table['HSS_2'] = 2 * ((TP * TN) - (FN * FP)) / (((TP + FN) * (FN + TN)) + ((TP + FP) * (FP + TN)))
+    eval_table['CSI'] = TP / (TP + FP + FN)
+    eval_table['F1'] = TP / (TP + 0.5 * (FP + FN))
+    CH = (TP + FP) * (TP + FN) / (TP + FP + FN + TN)
+    eval_table['GS'] = (TP - CH) / (TP + FP + FN - CH)
+    event_rate = (TP + FN) / (TP + FP + FN + TN)
+    if event_rate < 0.5:
+        eval_table['ApSS'] = (TP - FP) / (TP + FN)
+    else:
+        eval_table['ApSS'] = (TN - FN) / (FP + TN)
+
+    return eval_table
+
+batch_size = 20
+gr = 13
+
+num_epoch = 600
+Replay_capacity = 20000
+Learning_start = 10000
+
+EPS_START = 1.
+EPS_END = 0.1
+EPS_DECAY = 100000
+
+TARGET_EPS = 0.
+
+GAMMA = 0.99
+
+lr = 0.00025
+
+Transition = namedtuple('Transition',
+                        ('current_state', 'action', 'next_state', 'reward'))
+
+memory = ReplayMemory(Replay_capacity)
+
+n_actions = 2
+
+
+root = 'C:\\Users\\YKW\\PycharmProjects\\SUNPY\\generated\\Data_bySolarCycle'
+train = Magnetograms(mod='Train', root=root)
+test = Magnetograms(mod='Test', root=root)
+train_dataloader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=0)
+test_dataloader = DataLoader(test, batch_size=batch_size, shuffle=True, num_workers=0)
+
+policy_net = DenseNet(layers_num=5, growth_rate=gr, drop_rate=0.5).to(device=DEVICE)
+target_net = DenseNet(layers_num=5, growth_rate=gr, drop_rate=0.5).to(device=DEVICE)
+target_net.load_state_dict(policy_net.state_dict())
+target_net.eval()
+optimizer = optim.RMSprop(policy_net.parameters(), lr=lr, eps=0.001, alpha=0.95)
+crit = nn.MSELoss()
+
+now = datetime.datetime.now()
+now = now.strftime("%Y%m%d%H%M")
+model_name = f'{target_net._get_name()}_{now}'
+
+Save_path = f'C:\\Users\\YKW\\PycharmProjects\\Reinforcement\\Models\\{model_name}'
+if not os.path.exists(Save_path):
+    os.mkdir(Save_path)
+
+
+
+learn_frames = 0
+epoch_scores = []
+test_scores = []
+test_ep = []
+num_frames = 0
+
+print(f'~{Learning_start} frames: Making initial replay memory by random policy')
+print(
+    f'{Learning_start}~{Learning_start + EPS_DECAY} frames: Learning by e-greedy policy with decreased linearly from {EPS_START} to {EPS_END}')
+print(f'Target policy is e-greedy with e = {TARGET_EPS}')
+
+# Reward_tag = {'TP': 8, 'FP': -4, 'FN': -16, 'TN': 1}
+# Reward_tag = {'TP': 1, 'FP': -1, 'FN': -1, 'TN': 1}
+# Reward_tag = {'TP': 8, 'FP': -64, 'FN': -8, 'TN': 1}
+# Reward_tag = {'TP': 8, 'FP': -8, 'FN': -16, 'TN': 1}
+Reward_tag = {'TP': 4, 'FP': -2, 'FN': -8, 'TN': 1}
+
+Reward_bag = [[Reward_tag['TN'], Reward_tag['FN']], [Reward_tag['FP'], Reward_tag['TP']]]  # [result, label]
+num_frames = 0
+for epoch in trange(num_epoch):
+    tic = time.time()
+    score = 0
+
+    if epoch % 20 == 0:
+        gc.collect()
+
+    if epoch % 2 == 1:
+        update = True
+    else:
+        update = False
+
+    for data, label, _ in train_dataloader:
+        current_state = data
+        next_state = torch.roll(current_state, shifts=-1, dims=0)
+
+        for idx in range(len(label)):
+            num_frames = num_frames + 1
+            reward = 0
+
+            if num_frames < Learning_start:
+                action = select_action(current_state, 0)
+            else:
+                learn_frames = learn_frames + 1
+                action = select_action(current_state, learn_frames)
+
+            reward = Reward_bag[action[idx]][label[idx]]
+
+            score = score + reward
+            memory.push(current_state[idx:idx+1], torch.tensor([action[idx]]), next_state[idx:idx+1], torch.tensor([reward]))
+
+    #############################################
+            if num_frames < Learning_start:
+                continue
+
+            policy_net.train()
+            target_net.eval()
+            transitions = memory.sample(batch_size)
+            batch = Transition(*zip(*transitions))
+
+            state_batch = torch.cat(batch.current_state).to(device=DEVICE)
+            next_state_batch = torch.cat(batch.next_state).to(device=DEVICE)
+            action_batch = torch.cat(batch.action).to(device=DEVICE)
+            reward_batch = torch.cat(batch.reward).to(device=DEVICE)
+
+            state_action_values = policy_net(state_batch).gather(1, action_batch.reshape(-1, 1))
+
+            with torch.no_grad():
+                next_state_values = target_net(next_state_batch).max(1)[0]
+
+            expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+
+            loss = crit(state_action_values, expected_state_action_values.unsqueeze(1))
+
+            optimizer.zero_grad()
+            loss.backward()
+            for param in policy_net.parameters():
+                param.grad.data.clamp_(-1, 1)
+            optimizer.step()
+    #############################################
+
+    if num_frames < Learning_start:
+        initset_done_ep = epoch + 1
+        # initset_done_ep is the learning starting epoch that means num_frames is greater than Learning_start.
+        # Then, when num_frames >= Learning_start, learning start and initset_done_ep is no more updated.
+        # So, the last initset_done_ep is the learning start epoch - 1.
+        # it is why the initset_done_ep = epoch + 1.
+        toc = time.time()
+        print(
+            f'{epoch} epoch train time: {toc - tic:.2f}')
+        continue
+
+    epoch_scores.append(score)
+    plot_scores()
+
+    toc = time.time()
+    print(
+        f'{epoch} epoch train time: {toc - tic:.2f}')
+
+    if update:
+        tic = time.time()
+
+        target_net.load_state_dict(policy_net.state_dict())
+        target_net.eval()
+
+        test_score = 0
+        test_cont_table = [[0, 0], [0, 0]]   # [[TN, FN], [FP, TP]]
+
+        with torch.no_grad():
+            for test_data, test_label, _ in test_dataloader:
+                test_action = target_net(test_data.to(device=DEVICE)).max(1)[1]
+                for idx in range(len(test_label)):
+                    test_reward = 0
+                    test_cont_table[test_action[idx]][test_label[idx]] = test_cont_table[test_action[idx]][test_label[idx]] + 1
+
+                    test_reward = Reward_bag[test_action[idx]][test_label[idx]]
+                    test_score = test_score + test_reward
+
+        test_scores.append(test_score)
+        test_ep.append(epoch - initset_done_ep)
+        plot_scores()
+
+        test_skill_eval = skill_eval(test_cont_table)
+
+        reward_table = f"TP: {Reward_tag['TP']}, FP: {Reward_tag['FP']}, FN: {Reward_tag['FN']}, TN: {Reward_tag['TN']}"
+        skill_scores = ''
+        for k in test_skill_eval.keys():
+            skill_scores = skill_scores + f'{k}: {test_skill_eval[k]}\n'
+        desc = f'{reward_table}\n\nTraining_score: {score}\nTest_score: {test_score}\n\n{skill_scores}'
+        save_model(Save_path, target_net, f'{model_name}_{epoch}', optimizer, epoch, batch_size=batch_size,
+                   Description=desc)
+        plt.savefig(f'{Save_path}\\{model_name}_progressive.png')
+
+        toc = time.time()
+        print(
+            f'{epoch} epoch train time: {toc - tic:.2f}')
+
+# plot_scores()
+# plt.savefig(f'{Save_path}\\progressive.png')
