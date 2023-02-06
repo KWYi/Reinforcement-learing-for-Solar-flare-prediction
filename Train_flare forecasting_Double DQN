@@ -1,3 +1,6 @@
+###########################
+Training of >= M solar flare 24 hour predction based on Double Deep Q Network
+###########################
 import os, sys
 import random
 import numpy as np
@@ -18,20 +21,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# seed = 1234
-# seeds = [890, 123, 10, 4321, 62, 6301, 8, 888, 456]
-seeds = [8, 888, 456]
+seeds = [1234]
 ################
 for seed in seeds:
-    # seed = 890
-    # seed = 123
-    # seed = 10
-    # seed = 4321
-    # seed = 62
-    # seed = 6301
-    # seed = 8
-    # seed = 888
-    # seed = 456
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
