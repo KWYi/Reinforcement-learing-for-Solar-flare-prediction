@@ -1,0 +1,137 @@
+import os
+import glob
+import torch
+from torch.utils.data import Dataset
+from torchvision import transforms
+from torchvision.transforms import Grayscale, Compose, ToTensor, Normalize
+import numpy as np
+import PIL
+import sys
+import random
+import matplotlib.pyplot as plt
+from PIL import Image
+
+def Norm(x, _maxval, _minval):
+    return (((x - _minval) / (_maxval - _minval)) - 0.5) / 0.5
+
+class Magnetograms(Dataset):
+    def __init__(self, mod, root):
+        super(Magnetograms, self).__init__()
+        self.root = root
+        self.mod = mod
+        self.file_list = []
+
+
+        self.file_list += self.Path_label_list('MDI', Flare=False)
+        self.file_list += self.Path_label_list('MDI', Flare=True)
+        self.file_list += self.Path_label_list('HMI', Flare=False)
+        self.file_list += self.Path_label_list('HMI', Flare=True)
+
+        self.len = len(self.file_list)
+
+    def __getitem__(self, index):
+        Input_img = Image.open(self.file_list[index][0])
+        tag = self.file_list[index][2]
+        return self._transform(tag)(Input_img), torch.tensor(int(self.file_list[index][1])), self.file_list[index][0]
+
+    def __len__(self):
+        return self.len
+
+    def Path_label_list(self, data, Flare):
+        if data == 'MDI':
+            # folder = 'mdi_image_0000_or_last_of_the_day'
+            folder = 'MDI'
+            tag = 'MDI'
+        elif data == 'HMI':
+            # folder = 'SDO_HMI_image_0000_or_last_of_the_day'
+            folder = 'HMI'
+            tag = 'HMI'
+        else:
+            raise NotImplementedError
+        # _Classes = ['C', 'M', 'X'] if Flare else ['A', 'B']
+        _Classes = ['M', 'X'] if Flare else ['Non', 'A', 'B', 'C']
+
+        file_list = []
+        for _class in _Classes:
+            # file_list += glob.glob(os.path.join(self.root, self.mod, folder, _class, '*.jpg'))
+            file_list += glob.glob(os.path.join(self.root, self.mod, folder, _class, '*.png'))
+        file_list = np.array(file_list)
+        file_list = file_list.reshape(len(file_list), 1)
+        ## label = 0 for Non-flare and 1 for Flare.
+        label = np.ones(len(file_list), dtype='int').reshape(len(file_list), 1) if Flare \
+            else np.zeros(len(file_list), dtype='int').reshape(len(file_list), 1)
+        tag = np.array([tag] * len(file_list)).reshape(len(file_list), 1)
+        file_list = np.append(file_list, label, axis=-1)
+        file_list = np.append(file_list, tag, axis=-1)
+        file_list = file_list.tolist()
+        return file_list
+
+    def _transform(self, tag):
+        transform_list = []
+        transform_list.append(Grayscale(num_output_channels=1))
+        transform_list.append(ToTensor())
+        # if tag == 'MDI':
+        #     transform_list.append(lambda x: MDI_cover(x))
+        # elif tag == 'HMI':
+        #     transform_list.append(lambda x: HMI_cover(x))
+        # else:
+        #     raise NotImplementedError
+        transform_list.append(Normalize(mean=[0.5], std=[0.5]))
+        return Compose(transform_list)
+
+
+
+class Magnetograms_tensor(Magnetograms):
+    def __init__(self, mod, root):
+        super(Magnetograms_tensor, self).__init__(mod, root)
+
+    def Path_label_list(self, data, Flare):
+        if data == 'MDI':
+            # folder = 'mdi_image_0000_or_last_of_the_day'
+            folder = 'MDI'
+            tag = 'MDI'
+        elif data == 'HMI':
+            # folder = 'SDO_HMI_image_0000_or_last_of_the_day'
+            folder = 'HMI'
+            tag = 'HMI'
+        else:
+            raise NotImplementedError
+        # _Classes = ['C', 'M', 'X'] if Flare else ['A', 'B']
+        _Classes = ['M', 'X'] if Flare else ['Non', 'A', 'B', 'C']
+
+        file_list = []
+        for _class in _Classes:
+            # file_list += glob.glob(os.path.join(self.root, self.mod, folder, _class, '*.jpg'))
+            file_list += glob.glob(os.path.join(self.root, self.mod, folder, _class, '*.tensor'))
+        file_list = np.array(file_list)
+        file_list = file_list.reshape(len(file_list), 1)
+        ## label = 0 for Non-flare and 1 for Flare.
+        label = np.ones(len(file_list), dtype='int').reshape(len(file_list), 1) if Flare \
+            else np.zeros(len(file_list), dtype='int').reshape(len(file_list), 1)
+        tag = np.array([tag] * len(file_list)).reshape(len(file_list), 1)
+        file_list = np.append(file_list, label, axis=-1)
+        file_list = np.append(file_list, tag, axis=-1)
+        file_list = file_list.tolist()
+        return file_list
+
+    def __getitem__(self, index):
+        Input_tensor = torch.load(self.file_list[index][0])
+        tag = self.file_list[index][2]
+        return Input_tensor, torch.tensor(int(self.file_list[index][1])), self.file_list[index][0]
+
+
+
+class Magnetograms_img(Magnetograms):
+    def __init__(self, mod, root):
+        super(Magnetograms_img, self).__init__(mod, root)
+
+    def __getitem__(self, index):
+        Input_img = Image.open(self.file_list[index][0])
+        tag = self.file_list[index][2]
+        return self._transform(tag)(Input_img), torch.tensor(int(self.file_list[index][1])), self._mini_transform()(Input_img)
+
+    def _mini_transform(self):
+        transform_list = []
+        transform_list.append(Grayscale(num_output_channels=1))
+        transform_list.append(ToTensor())
+        return Compose(transform_list)
